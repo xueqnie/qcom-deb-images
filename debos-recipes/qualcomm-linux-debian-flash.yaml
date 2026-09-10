@@ -15,10 +15,13 @@ architecture: arm64
 actions:
   - action: download
     description: Download qcom-ptool
-    url: https://github.com/qualcomm-linux/qcom-ptool/archive/83631c3415402908fedabf8b54dbf2363353094b.tar.gz
+    # TEMPORARY: xueqnie/qcom-ptool fork = qualcomm-linux/qcom-ptool@83631c34
+    # plus the maili-mtp/ufs platform (upstream has none yet). Revert to the
+    # qualcomm-linux URL once the maili platform is merged upstream.
+    url: https://github.com/xueqnie/qcom-ptool/archive/9c37d799753ef2d36d98c0002e556a88fb2e50e1.tar.gz
     name: qcom-ptool
     filename: qcom-ptool.tar.gz
-    sha256sum: 39068987e6e3b8a892822d02e7e5bae75b8b589f3849f8f2e47bebed4f09eb94
+    sha256sum: ed8cd568623e599e8be0e2237654d28975911b0e8b88036e7ce89e6534f66c10
     unpack: true
 
   - action: download
@@ -407,6 +410,48 @@ actions:
     )
     "dtb" "qcom/qrb2210-arduino-imola.dtb"
 )}}
+{{- /*
+    Maili MTP (SM8950). The firmware (ffw) hosting server is not yet available,
+    so boot binaries are served from a local HTTP server (see
+    debos-recipes/README or the maili bring-up notes for how to stage
+    maili-boot-binaries.zip from maili_fw/UFS/FIREHOSE/). Override the URL with
+    -t maili_boot_binaries_url:http://<host>:<port>/maili-boot-binaries.zip and
+    the checksum with -t maili_boot_binaries_sha256:<sum> as needed.
+
+    qcom-ptool has no upstream platforms/maili-mtp/ entry yet, so the
+    qcom-ptool download above is TEMPORARILY pointed at the xueqnie/qcom-ptool
+    fork (= upstream 83631c34 + the maili-mtp/ufs platform). Revert to the
+    qualcomm-linux URL once the platform is merged upstream. No cdt_download:
+    the maili partitions.conf cdt partition carries no --filename.
+
+    IMPORTANT (EDL Sahara chain): maili's PBL loads a chain of RAM-only images
+    over Sahara before Firehose runs, described by qsahara_device_programmer.xml
+    (image_id -> file). These EDL images (qsahara_device_programmer.xml,
+    xbl_config_devprg.elf, tme_config_edl.elf, DCB_LP5_V1_ASIC.elf, plus
+    sequencer_ram.elf=id59, signed_firmware_soc_view.elf, device_programmer_ddr.elf,
+    xbl_sc.elf, multi_image*.mbn) are NOT referenced by any rawprogram, so they
+    are easy to omit. The PCAT META conversion places the *_devprg/_edl images
+    and the qsahara xml at the flat-build ROOT, not inside UFS/FIREHOSE/ — our
+    first zip was built from FIREHOSE only and lacked them, causing qdl/PCAT to
+    fail with "Sahara image Id 59 could not be found". maili-boot-binaries.zip
+    MUST include all of them (sourced here from fangwu_flatbuild). Flash with:
+      qdl --storage ufs qsahara_device_programmer.xml rawprogram*.xml patch*.xml
+    (qsahara_device_programmer.xml is force-kept by the copy filter below.)
+*/}}
+{{- $boards = append $boards (dict
+    "name" "maili-mtp"
+    "soc_id" "sm8950"
+    "ptool_platforms" (list "maili-mtp/ufs")
+    "boot_binaries_download" (dict
+        "description" "Maili MTP boot binaries (local)"
+        "url" (or .maili_boot_binaries_url "http://10.0.2.2:8000/maili-boot-binaries.zip")
+        "name" "maili-mtp_boot-binaries"
+        "filename" "maili-mtp_boot-binaries.zip"
+        "sha256sum" (or .maili_boot_binaries_sha256 "3ca06caa0302943984167c8e5f6b13a2ad5ed1dc5fa22364e66642071f7b9b98")
+    )
+    "dtb" "qcom/maili-mtp.dtb"
+    "dtb_bin_type" "combineddtb"
+)}}
 
 {{- range $board := $boards }}
   - action: download
@@ -672,6 +717,8 @@ actions:
                   -or -name Qualcomm-Technologies-Inc.-Proprietary \
                   -or -name 'prog_*' \
                   -or -name 'boot.img' \
+                  -or -name 'pvmfw.img' \
+                  -or -name 'qsahara_device_programmer.xml' \
                   -or -name '*.bin' \
                   -or -name '*.elf' \
                   -or -name '*.melf' \
